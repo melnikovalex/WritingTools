@@ -1,3 +1,4 @@
+import ctypes
 import gettext
 import json
 import logging
@@ -602,6 +603,11 @@ class WritingToolApp(QtWidgets.QApplication):
 
         self.clear_clipboard()
 
+        # The hotkey fires while the user still holds its modifiers; a
+        # synthetic Ctrl+C would then arrive as e.g. Ctrl+Shift+Alt+C and
+        # copy nothing.
+        self._release_held_modifiers()
+
         kbrd = pykeyboard.Controller()
         try:
             kbrd.press(pykeyboard.Key.ctrl.value)
@@ -637,6 +643,23 @@ class WritingToolApp(QtWidgets.QApplication):
                     holder.ready.set()
 
         threading.Thread(target=_poll_clipboard, daemon=True).start()
+
+    @staticmethod
+    def _release_held_modifiers(wait=0.4):
+        """
+        Wait up to `wait` seconds for the user to release Ctrl/Shift/Alt/Win,
+        then force key-up for any still held. Windows only.
+        """
+        if not sys.platform.startswith('win32'):
+            return
+        user32 = ctypes.windll.user32
+        modifier_vks = (0xA2, 0xA3, 0xA0, 0xA1, 0xA4, 0xA5, 0x5B, 0x5C)  # L/R Ctrl, Shift, Alt, Win
+        held = lambda: [vk for vk in modifier_vks if user32.GetAsyncKeyState(vk) & 0x8000]
+        deadline = time.time() + wait
+        while held() and time.time() < deadline:
+            time.sleep(0.01)
+        for vk in held():
+            user32.keybd_event(vk, 0, 0x0002, 0)  # KEYEVENTF_KEYUP
 
     @staticmethod
     def clear_clipboard():
